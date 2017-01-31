@@ -96,20 +96,20 @@ func createCharts() {
 	fmt.Printf("Here I should create the charts\n")
 }
 
-func collectValues() {
-	fmt.Printf("Collecting!\n")
+func collectValues(conn *libvirt.Connect) ([]libvirt.DomainStats, error) {
+	return conn.GetAllDomainStats(nil, 0, libvirt.CONNECT_GET_ALL_DOMAINS_STATS_ACTIVE)
 }
 
-func printValues(dt time.Duration) {
-	fmt.Printf("%v elapsed\n", dt)
+func printValues(stats []libvirt.DomainStats, dt time.Duration) {
+	fmt.Printf("after %v: %v\n", dt, stats)
 }
 
 func main() {
 	if len(os.Args) != 2 {
 		log.Fatalf("usage: %s interval", os.Args[0])
 	}
-	conf := Config{URI: "qemu:///system", IntervalSeconds: 1}
 
+	conf := Config{URI: "qemu:///system", IntervalSeconds: 1}
 	confDir := os.Getenv("NETDATA_CONFIG_DIR")
 	if confDir != "" {
 		confPath := path.Join(confDir, confFile)
@@ -143,9 +143,12 @@ func main() {
 		actualInterval := now.Sub(lastUpdate)
 		lastUpdate = now
 
-		collectValues()
-
-		printValues(actualInterval)
+		stats, err := collectValues(conn)
+		if err != nil {
+			log.Printf("error collecting libvirt stats: %s", err)
+			continue
+		}
+		printValues(stats, actualInterval)
 	}
 	log.Printf("collection stopped")
 }
