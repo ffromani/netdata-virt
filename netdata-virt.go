@@ -63,7 +63,7 @@ func NewInterval() Interval {
 
 func (intv *Interval) Fill(conf Config, envVar string) error {
 	if conf.IntervalSeconds <= 0 {
-		return errors.New(fmt.Sprint("invalid interval: %d", conf.IntervalSeconds))
+		return errors.New(fmt.Sprintf("invalid interval: %d", conf.IntervalSeconds))
 	}
 
 	intv.Config = time.Duration(conf.IntervalSeconds) * time.Second
@@ -109,53 +109,55 @@ func (ch *Charts) UpdateAll(now time.Time, domStats []libvirt.DomainStats) {
 	ch.lastUpdate = now
 
 	for _, domStat := range domStats {
-		ch.Create(domStat)
-		ch.Update(actualInterval, domStat)
+		vmName, err := domStat.Domain.GetName()
+		if err != nil {
+			log.Printf("error collecting libvirt stats for Domain <>: %s", err)
+			continue
+		}
+		interval := actualInterval.Nanoseconds() / 1000 // microseconds
+
+		ch.UpdatePCPU(vmName, interval, domStat.Cpu)
 	}
 }
 
 // fields documentation:
 // https://github.com/firehol/netdata/wiki/External-Plugins
-func (ch *Charts) Create(domStat libvirt.DomainStats) {
-	var chartName string
-	vmName, err := domStat.Domain.GetName()
-	if err != nil {
-		log.Printf("error collecting libvirt stats for Domain <>: %s", err)
-		return
-	}
 
-	// TODO: how other plugins report cpu?
-	chartName = fmt.Sprint("virt.vm_%s_pcpu_time", vmName)
+func (ch *Charts) UpdatePCPU(vmName string, interval int64, pcpu *libvirt.DomainStatsCPU) {
+	chartName := fmt.Sprintf("virt.vm_%s_pcpu_time", vmName)
 	_, exists := ch.created[chartName]
 	if !exists {
-		fmt.Printf("CHART %s '' 'pcpu time spent' 'ns' 'pcpu' 'pcpu' stacked\n", chartName)
+		fmt.Printf("CHART %s '' 'pcpu time spent' 'ns' 'pcpu' 'cputime' stacked\n", chartName)
 		fmt.Printf("DIMENSION vm_%s_pcpu_time total\n", vmName)
 		fmt.Printf("DIMENSION vm_%s_pcpu_user user\n", vmName)
 		fmt.Printf("DIMENSION vm_%s_pcpu_sys sys\n", vmName)
 		ch.created[chartName] = true
 	}
+
+	fmt.Printf("BEGIN %s %d\n", chartName, interval)
+	fmt.Printf("SET vm_%s_pcpu_time = %d\n", vmName, pcpu.Time)
+	fmt.Printf("SET vm_%s_pcpu_user = %d\n", vmName, pcpu.User)
+	fmt.Printf("SET vm_%s_pcpu_sys = %d\n", vmName, pcpu.System)
+	fmt.Printf("END\n")
 }
 
-func (ch *Charts) Update(actualInterval time.Duration, domStat libvirt.DomainStats) {
-	var chartName string
-	vmName, err := domStat.Domain.GetName()
-	if err != nil {
-		log.Printf("error collecting libvirt stats for Domain <>: %s", err)
-		return
+func (ch *Charts) UpdateMemBalloon(vmName string, interval int64, balloon *libvirt.DomainStatsBalloon) {
+	chartName := fmt.Sprintf("virt.vm_%s_balloon", vmName)
+	_, exists := ch.created[chartName]
+	if !exists {
+		fmt.Printf("CHART %s '' 'balloon size' 'kiB' 'balloon' 'ram' stacked\n", chartName)
+		fmt.Printf("DIMENSION vm_%s_balloon_current current\n", vmName)
+		fmt.Printf("DIMENSION vm_%s_balloon_maximum maximum\n", vmName)
+		ch.created[chartName] = true
 	}
 
-	netDataInterval := actualInterval.Nanoseconds() / 1000 // microseconds
-
-	chartName = fmt.Sprint("virt.vm_%s_pcpu_time", vmName)
-	fmt.Printf("BEGIN %s %d\n", chartName, netDataInterval)
-	fmt.Printf("SET vm_%s_pcpu_time = %d\n", vmName, domStat.Cpu.Time)
-	fmt.Printf("SET vm_%s_pcpu_user = %d\n", vmName, domStat.Cpu.User)
-	fmt.Printf("SET vm_%s_pcpu_sys = %d\n", vmName, domStat.Cpu.System)
+	fmt.Printf("BEGIN %s %d\n", chartName, interval)
+	fmt.Printf("SET vm_%s_balloon_current = %d\n", vmName, balloon.Current)
+	fmt.Printf("SET vm_%s_balloon_maximum = %d\n", vmName, balloon.Maximum)
 	fmt.Printf("END\n")
 }
 
 // TODO
-// per-vm-balloon
 // per-vm-per-nic stats
 // per-vm-per-drive stats
 
