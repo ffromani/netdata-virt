@@ -117,6 +117,14 @@ func (ch *Charts) UpdateAll(now time.Time, domStats []libvirt.DomainStats) {
 		interval := actualInterval.Nanoseconds() / 1000 // microseconds
 
 		ch.UpdatePCPU(vmName, interval, domStat.Cpu)
+		ch.UpdateMemBalloon(vmName, interval, domStat.Balloon)
+
+		for _, domNetStat := range domStat.Net {
+			ch.UpdateNIC(vmName, interval, domNetStat)
+		}
+		for _, domBlockStat := range domStat.Block {
+			ch.UpdateBlockDev(vmName, interval, domBlockStat)
+		}
 	}
 }
 
@@ -157,9 +165,62 @@ func (ch *Charts) UpdateMemBalloon(vmName string, interval int64, balloon *libvi
 	fmt.Printf("END\n")
 }
 
-// TODO
-// per-vm-per-nic stats
-// per-vm-per-drive stats
+func (ch *Charts) UpdateNIC(vmName string, interval int64, nic libvirt.DomainStatsNet) {
+	ch.updateNICTraffic(vmName, interval, nic)
+	ch.updateNICErrors(vmName, interval, nic)
+	ch.updateNICPktDrop(vmName, interval, nic)
+}
+
+func (ch *Charts) updateNICTraffic(vmName string, interval int64, nic libvirt.DomainStatsNet) {
+	chartName := fmt.Sprintf("virt.vm_%s_nic_%s_traffic", vmName, nic.Name)
+	_, exists := ch.created[chartName]
+	if !exists {
+		fmt.Printf("CHART %s '' 'NIC traffic' 'bytes' %s 'traffic' stacked\n", chartName, nic.Name)
+		fmt.Printf("DIMENSION vm_%s_nic_%s_rx_bytes\n", vmName, nic.Name)
+		fmt.Printf("DIMENSION vm_%s_nic_%s_tx_bytes\n", vmName, nic.Name)
+		ch.created[chartName] = true
+	}
+
+	fmt.Printf("BEGIN %s %d\n", chartName, interval)
+	fmt.Printf("SET vm_%s_nic_%s_rx_bytes = %d\n", vmName, nic.Name, nic.RxBytes)
+	fmt.Printf("SET vm_%s_nix_%s_tx_bytes = %d\n", vmName, nic.Name, nic.TxBytes)
+	fmt.Printf("END\n")
+}
+
+func (ch *Charts) updateNICErrors(vmName string, interval int64, nic libvirt.DomainStatsNet) {
+	chartName := fmt.Sprintf("virt.vm_%s_nic_%s_errors", vmName, nic.Name)
+	_, exists := ch.created[chartName]
+	if !exists {
+		fmt.Printf("CHART %s '' 'NIC errors count' 'count' %s 'count' stacked\n", chartName, nic.Name)
+		fmt.Printf("DIMENSION vm_%s_nic_%s_rx_errs\n", vmName, nic.Name)
+		fmt.Printf("DIMENSION vm_%s_nic_%s_tx_errs\n", vmName, nic.Name)
+		ch.created[chartName] = true
+	}
+
+	fmt.Printf("BEGIN %s %d\n", chartName, interval)
+	fmt.Printf("SET vm_%s_nic_%s_rx_errs = %d\n", vmName, nic.Name, nic.RxErrs)
+	fmt.Printf("SET vm_%s_nix_%s_tx_errs = %d\n", vmName, nic.Name, nic.TxErrs)
+	fmt.Printf("END\n")
+}
+
+func (ch *Charts) updateNICPktDrop(vmName string, interval int64, nic libvirt.DomainStatsNet) {
+	chartName := fmt.Sprintf("virt.vm_%s_nic_%s_drops", vmName, nic.Name)
+	_, exists := ch.created[chartName]
+	if !exists {
+		fmt.Printf("CHART %s '' 'NIC drop count' 'packets' %s 'packets' stacked\n", chartName, nic.Name)
+		fmt.Printf("DIMENSION vm_%s_nic_%s_rx_drops\n", vmName, nic.Name)
+		fmt.Printf("DIMENSION vm_%s_nic_%s_tx_drops\n", vmName, nic.Name)
+		ch.created[chartName] = true
+	}
+
+	fmt.Printf("BEGIN %s %d\n", chartName, interval)
+	fmt.Printf("SET vm_%s_nic_%s_rx_drops = %d\n", vmName, nic.Name, nic.RxDrop)
+	fmt.Printf("SET vm_%s_nix_%s_tx_drops = %d\n", vmName, nic.Name, nic.TxDrop)
+	fmt.Printf("END\n")
+}
+
+func (ch *Charts) UpdateBlockDev(vmName string, interval int64, drv libvirt.DomainStatsBlock) {
+}
 
 func main() {
 	if len(os.Args) != 2 {
