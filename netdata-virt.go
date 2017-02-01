@@ -220,6 +220,61 @@ func (ch *Charts) updateNICPktDrop(vmName string, interval int64, nic libvirt.Do
 }
 
 func (ch *Charts) UpdateBlockDev(vmName string, interval int64, drv libvirt.DomainStatsBlock) {
+	ch.updateBlockDevTraffic(vmName, interval, drv)
+	ch.updateBlockDevOps(vmName, interval, drv)
+	ch.updateBlockDevTime(vmName, interval, drv)
+}
+
+func (ch *Charts) updateBlockDevTraffic(vmName string, interval int64, drv libvirt.DomainStatsBlock) {
+	chartName := fmt.Sprintf("virt.vm_%s_drive_%s_traffic", vmName, drv.Name)
+	_, exists := ch.created[chartName]
+	if !exists {
+		fmt.Printf("CHART %s '' 'Block device traffic' 'bytes' %s 'traffic' stacked\n", chartName, drv.Name)
+		fmt.Printf("DIMENSION vm_%s_drv_%s_rd_bytes\n", vmName, drv.Name)
+		fmt.Printf("DIMENSION vm_%s_drv_%s_wr_bytes\n", vmName, drv.Name)
+		ch.created[chartName] = true
+	}
+
+	fmt.Printf("BEGIN %s %d\n", chartName, interval)
+	fmt.Printf("SET vm_%s_drive_%s_rd_bytes = %d\n", vmName, drv.Name, drv.RdBytes)
+	fmt.Printf("SET vm_%s_drive_%s_wr_bytes = %d\n", vmName, drv.Name, drv.WrBytes)
+	fmt.Printf("END\n")
+}
+
+func (ch *Charts) updateBlockDevOps(vmName string, interval int64, drv libvirt.DomainStatsBlock) {
+	chartName := fmt.Sprintf("virt.vm_%s_drive_%s_ops", vmName, drv.Name)
+	_, exists := ch.created[chartName]
+	if !exists {
+		fmt.Printf("CHART %s '' 'Block device operations' 'operations' %s 'traffic' stacked\n", chartName, drv.Name)
+		fmt.Printf("DIMENSION vm_%s_drv_%s_rd_ops\n", vmName, drv.Name)
+		fmt.Printf("DIMENSION vm_%s_drv_%s_wr_ops\n", vmName, drv.Name)
+		fmt.Printf("DIMENSION vm_%s_drv_%s_fl_ops\n", vmName, drv.Name)
+		ch.created[chartName] = true
+	}
+
+	fmt.Printf("BEGIN %s %d\n", chartName, interval)
+	fmt.Printf("SET vm_%s_drive_%s_rd_ops = %d\n", vmName, drv.Name, drv.RdReqs)
+	fmt.Printf("SET vm_%s_drive_%s_wr_ops = %d\n", vmName, drv.Name, drv.WrReqs)
+	fmt.Printf("SET vm_%s_drive_%s_fl_ops = %d\n", vmName, drv.Name, drv.FlReqs)
+	fmt.Printf("END\n")
+}
+
+func (ch *Charts) updateBlockDevTime(vmName string, interval int64, drv libvirt.DomainStatsBlock) {
+	chartName := fmt.Sprintf("virt.vm_%s_drive_%s_times", vmName, drv.Name)
+	_, exists := ch.created[chartName]
+	if !exists {
+		fmt.Printf("CHART %s '' 'Block device time spent total' 'nanoseconds' %s 'traffic' stacked\n", chartName, drv.Name)
+		fmt.Printf("DIMENSION vm_%s_drv_%s_rd_time\n", vmName, drv.Name)
+		fmt.Printf("DIMENSION vm_%s_drv_%s_wr_time\n", vmName, drv.Name)
+		fmt.Printf("DIMENSION vm_%s_drv_%s_fl_time\n", vmName, drv.Name)
+		ch.created[chartName] = true
+	}
+
+	fmt.Printf("BEGIN %s %d\n", chartName, interval)
+	fmt.Printf("SET vm_%s_drive_%s_rd_time = %d\n", vmName, drv.Name, drv.RdTimes)
+	fmt.Printf("SET vm_%s_drive_%s_wr_time = %d\n", vmName, drv.Name, drv.WrTimes)
+	fmt.Printf("SET vm_%s_drive_%s_fl_time = %d\n", vmName, drv.Name, drv.FlTimes)
+	fmt.Printf("END\n")
 }
 
 func main() {
