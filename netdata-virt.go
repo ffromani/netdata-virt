@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"strconv"
 	"text/template"
 	"time"
 )
@@ -69,16 +70,17 @@ func (intv *Interval) Fill(conf Config, envVar string) error {
 
 	intv.Config = time.Duration(conf.IntervalSeconds) * time.Second
 
-	var err error
-	intv.Cmdline, err = time.ParseDuration(os.Args[1])
+	val, err := strconv.Atoi(os.Args[1])
+	intv.Cmdline = time.Duration(val) * time.Second
 	if err != nil {
 		return err
 	}
 	if envVar != "" {
-		intv.Environ, err = time.ParseDuration(envVar)
+		val, err = strconv.Atoi(envVar)
 		if err != nil {
 			return err
 		}
+		intv.Environ = time.Duration(val) * time.Second
 	}
 
 	return nil
