@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"text/template"
 	"time"
 )
 
@@ -92,38 +93,76 @@ func getInterval(conf Config) time.Duration {
 	return intv.Pick()
 }
 
+type ChartTemplates struct {
+	Graph     *template.Template
+	DataPoint *template.Template
+}
+
 type Charts struct {
-	created    map[string]bool
+	templates  map[string]ChartTemplates
 	lastUpdate time.Time
 }
 
 func NewCharts() Charts {
 	return Charts{
-		created:    make(map[string]bool),
+		templates:  make(map[string]ChartTemplates),
 		lastUpdate: time.Now(),
 	}
 }
 
-func (ch *Charts) UpdateAll(now time.Time, domStats []libvirt.DomainStats) {
+type VMStats struct {
+	ChartName string
+	VmName    string
+	Interval  int64
+	Pcpu      *libvirt.DomainStatsCPU
+	Balloon   *libvirt.DomainStatsBalloon
+	Net       *libvirt.DomainStatsNet
+	Block     *libvirt.DomainStatsBlock
+}
+
+func (ch *Charts) Update(now time.Time, domStats []libvirt.DomainStats) {
+	var err error
 	actualInterval := now.Sub(ch.lastUpdate)
 	ch.lastUpdate = now
 
 	for _, domStat := range domStats {
-		vmName, err := domStat.Domain.GetName()
+		vmStats := VMStats{
+			ChartName: "",
+			VmName:    "",
+			Interval:  actualInterval.Nanoseconds() / 1000, // microseconds
+			Pcpu:      domStat.Cpu,
+			Balloon:   domStat.Balloon,
+		}
+		vmStats.VmName, err = domStat.Domain.GetName()
 		if err != nil {
 			log.Printf("error collecting libvirt stats for Domain <>: %s", err)
 			continue
 		}
-		interval := actualInterval.Nanoseconds() / 1000 // microseconds
 
-		ch.UpdatePCPU(vmName, interval, domStat.Cpu)
-		ch.UpdateMemBalloon(vmName, interval, domStat.Balloon)
+		vmStats.ChartName = fmt.Sprintf("virt.vm_%s_pcpu_time", vmStats.VmName)
+		ch.updateFromTemplates(&vmStats, "pcpu")
+
+		vmStats.ChartName = fmt.Sprintf("virt.vm_%s_balloon", vmStats.VmName)
+		ch.updateFromTemplates(&vmStats, "balloon")
 
 		for _, domNetStat := range domStat.Net {
-			ch.UpdateNIC(vmName, interval, domNetStat)
+			vmStats.Net = &domNetStat
+			vmStats.ChartName = fmt.Sprintf("virt.vm_%s_nic_%s_traffic", vmStats.VmName, vmStats.Net.Name)
+			ch.updateFromTemplates(&vmStats, "nic_traffic")
+			vmStats.ChartName = fmt.Sprintf("virt.vm_%s_nic_%s_errors", vmStats.VmName, vmStats.Net.Name)
+			ch.updateFromTemplates(&vmStats, "nic_errors")
+			vmStats.ChartName = fmt.Sprintf("virt.vm_%s_nic_%s_drops", vmStats.VmName, vmStats.Net.Name)
+			ch.updateFromTemplates(&vmStats, "nic_drops")
 		}
+
 		for _, domBlockStat := range domStat.Block {
-			ch.UpdateBlockDev(vmName, interval, domBlockStat)
+			vmStats.Block = &domBlockStat
+			vmStats.ChartName = fmt.Sprintf("virt.vm_%s_drive_%s_traffic", vmStats.VmName, vmStats.Block.Name)
+			ch.updateFromTemplates(&vmStats, "block_traffic")
+			vmStats.ChartName = fmt.Sprintf("virt.vm_%s_drive_%s_iops", vmStats.VmName, vmStats.Block.Name)
+			ch.updateFromTemplates(&vmStats, "block_iops")
+			vmStats.ChartName = fmt.Sprintf("virt.vm_%s_drive_%s_times", vmStats.VmName, vmStats.Block.Name)
+			ch.updateFromTemplates(&vmStats, "block_times")
 		}
 	}
 }
@@ -131,150 +170,105 @@ func (ch *Charts) UpdateAll(now time.Time, domStats []libvirt.DomainStats) {
 // fields documentation:
 // https://github.com/firehol/netdata/wiki/External-Plugins
 
-func (ch *Charts) UpdatePCPU(vmName string, interval int64, pcpu *libvirt.DomainStatsCPU) {
-	chartName := fmt.Sprintf("virt.vm_%s_pcpu_time", vmName)
-	_, exists := ch.created[chartName]
+var graphTemplates = map[string]string{
+	"pcpu": `CHART {{.ChartName}} '' 'pcpu time spent' 'ns' 'pcpu' 'cputime' stacked
+DIMENSION vm_{{.VmName}}_pcpu_time total
+DIMENSION vm_{{.VmName}}_pcpu_user user
+DIMENSION vm_{{.VmName}}_pcpu_sys sys
+`,
+	"balloon": `CHART {{.ChartName}} '' 'balloon size' 'kiB' 'balloon' 'ram' stacked
+DIMENSION vm_{{.VmName}}_balloon_current current
+DIMENSION vm_{{.VmName}}_balloon_maximum maximum
+`,
+	"nic_traffic": `CHART {{.ChartName}} '' 'NIC traffic' 'bytes' {{.Net.Name}} 'traffic' stacked
+DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_rx_bytes
+DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_tx_bytes
+`,
+	"nic_errors": ` CHART {{.ChartName}} '' 'NIC errors count' 'count' {{.Net.Name}} 'count' stacked
+DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_rx_errs
+DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_tx_errs
+`,
+	"nic_drops": `CHART {{.ChartName}} '' 'NIC drop count' 'packets' {{.Net.Name}} 'packets' stacked
+DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_rx_drops
+DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_tx_drops
+`,
+	"block_traffic": `CHART {{.ChartName}} '' 'Block device traffic' 'bytes' {{.Block.Name}} 'traffic' stacked
+DIMENSION vm_{{.VmName}}_drive_{{.Block.Name}}_rd_bytes
+DIMENSION vm_{{.VmName}}_drive_{{.Block.Name}}_wr_bytes
+`,
+	"block_iops": `CHART {{.ChartName}} '' 'Block device operations' 'operations' {{.Block.Name}} 'iops' stacked
+DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_rd_ops
+DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_wr_ops
+DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_fl_ops
+`,
+	"block_times": `CHART {{.ChartName}} '' 'Block device time spent total' 'nanoseconds' {{.Block.Name}} 'iotime' stacked
+DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_rd_time
+DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_wr_time
+DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_fl_time
+`,
+}
+
+var dataPointTemplates = map[string]string{
+	"pcpu": `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_pcpu_time = {{.Pcpu.Time}}
+SET vm_{{.VmName}}_pcpu_user = {{.Pcpu.User}}
+SET vm_{{.VmName}}_pcpu_sys = {{.Pcpu.System}}
+END
+`,
+	"balloon": `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_balloon_current = {{.Balloon.Current}}
+SET vm_{{.VmName}}_balloon_maximum = {{.Balloon.Maximum}}
+END
+`,
+	"nic_traffic": `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_nic_{{.Net.Name}}_rx_bytes = {{.Net.RxBytes}}
+SET vm_{{.VmName}}_nix_{{.Net.Name}}_tx_bytes = {{.Net.TxBytes}}
+END
+`,
+	"nic_errors": `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_nic_{{.Net.Name}}_rx_errs = {{.Net.RxErrs}})
+SET vm_{{.VmName}}_nix_{{.Net.Name}}_tx_errs = {{.Net.TxErrs}}
+END
+`,
+	"nic_drops": `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_nic_{{.Net.Name}}_rx_drops = {{.Net.RxDrop}}
+SET vm_{{.VmName}}_nix_{{.Net.Name}}_tx_drops = {{.Net.TxDrop}}
+END
+`,
+	"block_traffic": `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_rd_bytes = {{.Block.RdBytes}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_wr_bytes = {{.Block.WrBytes}}
+END
+`,
+	"block_iops": `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_rd_ops = {{.Block.RdReqs}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_wr_ops = {{.Block.WrReqs}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_fl_ops = {{.Block.FlReqs}}
+END
+`,
+	"block_times": `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_rd_time = {{.Block.RdTimes}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_wr_time = {{.Block.WrTimes}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_fl_time = {{.Block.FlTimes}}
+END
+`,
+}
+
+func (ch *Charts) updateFromTemplates(st *VMStats, key string) error {
+	var err error
+	templates, exists := ch.templates[st.ChartName]
 	if !exists {
-		fmt.Printf("CHART %s '' 'pcpu time spent' 'ns' 'pcpu' 'cputime' stacked\n", chartName)
-		fmt.Printf("DIMENSION vm_%s_pcpu_time total\n", vmName)
-		fmt.Printf("DIMENSION vm_%s_pcpu_user user\n", vmName)
-		fmt.Printf("DIMENSION vm_%s_pcpu_sys sys\n", vmName)
-		ch.created[chartName] = true
+		templates.Graph = template.Must(template.New(fmt.Sprintf("%s graph", key)).Parse(graphTemplates[key]))
+		err = templates.Graph.Execute(os.Stdout, st)
+		if err != nil {
+			// TODO: log
+			return err
+		}
+		templates.DataPoint = template.Must(template.New(fmt.Sprintf("%s data point", key)).Parse(dataPointTemplates[key]))
+		// TODO: what if fails?
+		ch.templates[st.ChartName] = templates
 	}
-
-	fmt.Printf("BEGIN %s %d\n", chartName, interval)
-	fmt.Printf("SET vm_%s_pcpu_time = %d\n", vmName, pcpu.Time)
-	fmt.Printf("SET vm_%s_pcpu_user = %d\n", vmName, pcpu.User)
-	fmt.Printf("SET vm_%s_pcpu_sys = %d\n", vmName, pcpu.System)
-	fmt.Printf("END\n")
-}
-
-func (ch *Charts) UpdateMemBalloon(vmName string, interval int64, balloon *libvirt.DomainStatsBalloon) {
-	chartName := fmt.Sprintf("virt.vm_%s_balloon", vmName)
-	_, exists := ch.created[chartName]
-	if !exists {
-		fmt.Printf("CHART %s '' 'balloon size' 'kiB' 'balloon' 'ram' stacked\n", chartName)
-		fmt.Printf("DIMENSION vm_%s_balloon_current current\n", vmName)
-		fmt.Printf("DIMENSION vm_%s_balloon_maximum maximum\n", vmName)
-		ch.created[chartName] = true
-	}
-
-	fmt.Printf("BEGIN %s %d\n", chartName, interval)
-	fmt.Printf("SET vm_%s_balloon_current = %d\n", vmName, balloon.Current)
-	fmt.Printf("SET vm_%s_balloon_maximum = %d\n", vmName, balloon.Maximum)
-	fmt.Printf("END\n")
-}
-
-func (ch *Charts) UpdateNIC(vmName string, interval int64, nic libvirt.DomainStatsNet) {
-	ch.updateNICTraffic(vmName, interval, nic)
-	ch.updateNICErrors(vmName, interval, nic)
-	ch.updateNICPktDrop(vmName, interval, nic)
-}
-
-func (ch *Charts) updateNICTraffic(vmName string, interval int64, nic libvirt.DomainStatsNet) {
-	chartName := fmt.Sprintf("virt.vm_%s_nic_%s_traffic", vmName, nic.Name)
-	_, exists := ch.created[chartName]
-	if !exists {
-		fmt.Printf("CHART %s '' 'NIC traffic' 'bytes' %s 'traffic' stacked\n", chartName, nic.Name)
-		fmt.Printf("DIMENSION vm_%s_nic_%s_rx_bytes\n", vmName, nic.Name)
-		fmt.Printf("DIMENSION vm_%s_nic_%s_tx_bytes\n", vmName, nic.Name)
-		ch.created[chartName] = true
-	}
-
-	fmt.Printf("BEGIN %s %d\n", chartName, interval)
-	fmt.Printf("SET vm_%s_nic_%s_rx_bytes = %d\n", vmName, nic.Name, nic.RxBytes)
-	fmt.Printf("SET vm_%s_nix_%s_tx_bytes = %d\n", vmName, nic.Name, nic.TxBytes)
-	fmt.Printf("END\n")
-}
-
-func (ch *Charts) updateNICErrors(vmName string, interval int64, nic libvirt.DomainStatsNet) {
-	chartName := fmt.Sprintf("virt.vm_%s_nic_%s_errors", vmName, nic.Name)
-	_, exists := ch.created[chartName]
-	if !exists {
-		fmt.Printf("CHART %s '' 'NIC errors count' 'count' %s 'count' stacked\n", chartName, nic.Name)
-		fmt.Printf("DIMENSION vm_%s_nic_%s_rx_errs\n", vmName, nic.Name)
-		fmt.Printf("DIMENSION vm_%s_nic_%s_tx_errs\n", vmName, nic.Name)
-		ch.created[chartName] = true
-	}
-
-	fmt.Printf("BEGIN %s %d\n", chartName, interval)
-	fmt.Printf("SET vm_%s_nic_%s_rx_errs = %d\n", vmName, nic.Name, nic.RxErrs)
-	fmt.Printf("SET vm_%s_nix_%s_tx_errs = %d\n", vmName, nic.Name, nic.TxErrs)
-	fmt.Printf("END\n")
-}
-
-func (ch *Charts) updateNICPktDrop(vmName string, interval int64, nic libvirt.DomainStatsNet) {
-	chartName := fmt.Sprintf("virt.vm_%s_nic_%s_drops", vmName, nic.Name)
-	_, exists := ch.created[chartName]
-	if !exists {
-		fmt.Printf("CHART %s '' 'NIC drop count' 'packets' %s 'packets' stacked\n", chartName, nic.Name)
-		fmt.Printf("DIMENSION vm_%s_nic_%s_rx_drops\n", vmName, nic.Name)
-		fmt.Printf("DIMENSION vm_%s_nic_%s_tx_drops\n", vmName, nic.Name)
-		ch.created[chartName] = true
-	}
-
-	fmt.Printf("BEGIN %s %d\n", chartName, interval)
-	fmt.Printf("SET vm_%s_nic_%s_rx_drops = %d\n", vmName, nic.Name, nic.RxDrop)
-	fmt.Printf("SET vm_%s_nix_%s_tx_drops = %d\n", vmName, nic.Name, nic.TxDrop)
-	fmt.Printf("END\n")
-}
-
-func (ch *Charts) UpdateBlockDev(vmName string, interval int64, drv libvirt.DomainStatsBlock) {
-	ch.updateBlockDevTraffic(vmName, interval, drv)
-	ch.updateBlockDevOps(vmName, interval, drv)
-	ch.updateBlockDevTime(vmName, interval, drv)
-}
-
-func (ch *Charts) updateBlockDevTraffic(vmName string, interval int64, drv libvirt.DomainStatsBlock) {
-	chartName := fmt.Sprintf("virt.vm_%s_drive_%s_traffic", vmName, drv.Name)
-	_, exists := ch.created[chartName]
-	if !exists {
-		fmt.Printf("CHART %s '' 'Block device traffic' 'bytes' %s 'traffic' stacked\n", chartName, drv.Name)
-		fmt.Printf("DIMENSION vm_%s_drv_%s_rd_bytes\n", vmName, drv.Name)
-		fmt.Printf("DIMENSION vm_%s_drv_%s_wr_bytes\n", vmName, drv.Name)
-		ch.created[chartName] = true
-	}
-
-	fmt.Printf("BEGIN %s %d\n", chartName, interval)
-	fmt.Printf("SET vm_%s_drive_%s_rd_bytes = %d\n", vmName, drv.Name, drv.RdBytes)
-	fmt.Printf("SET vm_%s_drive_%s_wr_bytes = %d\n", vmName, drv.Name, drv.WrBytes)
-	fmt.Printf("END\n")
-}
-
-func (ch *Charts) updateBlockDevOps(vmName string, interval int64, drv libvirt.DomainStatsBlock) {
-	chartName := fmt.Sprintf("virt.vm_%s_drive_%s_ops", vmName, drv.Name)
-	_, exists := ch.created[chartName]
-	if !exists {
-		fmt.Printf("CHART %s '' 'Block device operations' 'operations' %s 'traffic' stacked\n", chartName, drv.Name)
-		fmt.Printf("DIMENSION vm_%s_drv_%s_rd_ops\n", vmName, drv.Name)
-		fmt.Printf("DIMENSION vm_%s_drv_%s_wr_ops\n", vmName, drv.Name)
-		fmt.Printf("DIMENSION vm_%s_drv_%s_fl_ops\n", vmName, drv.Name)
-		ch.created[chartName] = true
-	}
-
-	fmt.Printf("BEGIN %s %d\n", chartName, interval)
-	fmt.Printf("SET vm_%s_drive_%s_rd_ops = %d\n", vmName, drv.Name, drv.RdReqs)
-	fmt.Printf("SET vm_%s_drive_%s_wr_ops = %d\n", vmName, drv.Name, drv.WrReqs)
-	fmt.Printf("SET vm_%s_drive_%s_fl_ops = %d\n", vmName, drv.Name, drv.FlReqs)
-	fmt.Printf("END\n")
-}
-
-func (ch *Charts) updateBlockDevTime(vmName string, interval int64, drv libvirt.DomainStatsBlock) {
-	chartName := fmt.Sprintf("virt.vm_%s_drive_%s_times", vmName, drv.Name)
-	_, exists := ch.created[chartName]
-	if !exists {
-		fmt.Printf("CHART %s '' 'Block device time spent total' 'nanoseconds' %s 'traffic' stacked\n", chartName, drv.Name)
-		fmt.Printf("DIMENSION vm_%s_drv_%s_rd_time\n", vmName, drv.Name)
-		fmt.Printf("DIMENSION vm_%s_drv_%s_wr_time\n", vmName, drv.Name)
-		fmt.Printf("DIMENSION vm_%s_drv_%s_fl_time\n", vmName, drv.Name)
-		ch.created[chartName] = true
-	}
-
-	fmt.Printf("BEGIN %s %d\n", chartName, interval)
-	fmt.Printf("SET vm_%s_drive_%s_rd_time = %d\n", vmName, drv.Name, drv.RdTimes)
-	fmt.Printf("SET vm_%s_drive_%s_wr_time = %d\n", vmName, drv.Name, drv.WrTimes)
-	fmt.Printf("SET vm_%s_drive_%s_fl_time = %d\n", vmName, drv.Name, drv.FlTimes)
-	fmt.Printf("END\n")
+	return templates.DataPoint.Execute(os.Stdout, st)
 }
 
 func main() {
@@ -319,7 +313,7 @@ func main() {
 		}
 		// WARNING: we assume collection time is negligible
 
-		charts.UpdateAll(now, stats)
+		charts.Update(now, stats)
 	}
 	log.Printf("collection stopped")
 }
