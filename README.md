@@ -10,6 +10,12 @@ GPLv2 licensed.
 
 More to come.
 
+Screenshots
+-----------
+
+[screenshot1](/doc/virt1.png)
+[screenshot2](/doc/virt2.png)
+
 
 Installation
 ------------
@@ -18,6 +24,7 @@ Installation
     $ cd netdata-virt
     $ go build -v .
     # cp netdata-virt /usr/libexec/netdata/plugins.d/virt.plugin
+    # systemctl restart netdata
     
 
 (yes, that's it)
