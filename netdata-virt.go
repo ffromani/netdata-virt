@@ -19,6 +19,116 @@ import (
 
 const confFile string = "netdata-virt.json"
 
+type ChartConfig struct {
+	Graph     string
+	DataPoint string
+}
+
+type ChartTemplates struct {
+	Graph     *template.Template
+	DataPoint *template.Template
+}
+
+// fields documentation:
+// https://github.com/firehol/netdata/wiki/External-Plugins
+var templateConfig = map[string]ChartConfig{
+	"pcpu": ChartConfig{
+		Graph: `CHART {{.ChartName}} '' 'pcpu time spent' 'ns' 'pcpu' 'cputime' stacked
+DIMENSION vm_{{.VmName}}_pcpu_time total
+DIMENSION vm_{{.VmName}}_pcpu_user user
+DIMENSION vm_{{.VmName}}_pcpu_sys sys
+`,
+		DataPoint: `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_pcpu_time = {{.Pcpu.Time}}
+SET vm_{{.VmName}}_pcpu_user = {{.Pcpu.User}}
+SET vm_{{.VmName}}_pcpu_sys = {{.Pcpu.System}}
+END
+`,
+	},
+	"balloon": ChartConfig{
+		Graph: `CHART {{.ChartName}} '' 'balloon size' 'kiB' 'balloon' 'ram' stacked
+DIMENSION vm_{{.VmName}}_balloon_current current
+DIMENSION vm_{{.VmName}}_balloon_maximum maximum
+`,
+		DataPoint: `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_balloon_current = {{.Balloon.Current}}
+SET vm_{{.VmName}}_balloon_maximum = {{.Balloon.Maximum}}
+END
+`,
+	},
+	"nic_traffic": ChartConfig{
+		Graph: `CHART {{.ChartName}} '' 'NIC traffic' 'bytes' 'network' {{.Net.Name}} stacked
+DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_rx_bytes
+DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_tx_bytes
+`,
+		DataPoint: `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_nic_{{.Net.Name}}_rx_bytes = {{.Net.RxBytes}}
+SET vm_{{.VmName}}_nix_{{.Net.Name}}_tx_bytes = {{.Net.TxBytes}}
+END
+`,
+	},
+	"nic_errors": ChartConfig{
+		Graph: `CHART {{.ChartName}} '' 'NIC errors count' 'count' 'network' {{.Net.Name}} stacked
+DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_rx_errs
+DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_tx_errs
+`,
+		DataPoint: `
+BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_nic_{{.Net.Name}}_rx_errs = {{.Net.RxErrs}})
+SET vm_{{.VmName}}_nix_{{.Net.Name}}_tx_errs = {{.Net.TxErrs}}
+END
+`,
+	},
+	"nic_drops": ChartConfig{
+		Graph: `CHART {{.ChartName}} '' 'NIC drop count' 'packets' 'network' {{.Net.Name}} stacked
+DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_rx_drops
+DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_tx_drops
+`,
+		DataPoint: `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_nic_{{.Net.Name}}_rx_drops = {{.Net.RxDrop}}
+SET vm_{{.VmName}}_nix_{{.Net.Name}}_tx_drops = {{.Net.TxDrop}}
+END
+`,
+	},
+	"block_traffic": ChartConfig{
+		Graph: `CHART {{.ChartName}} '' 'Block device traffic' 'bytes' 'storage' {{.Block.Name}} stacked
+DIMENSION vm_{{.VmName}}_drive_{{.Block.Name}}_rd_bytes
+DIMENSION vm_{{.VmName}}_drive_{{.Block.Name}}_wr_bytes
+`,
+		DataPoint: `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_rd_bytes = {{.Block.RdBytes}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_wr_bytes = {{.Block.WrBytes}}
+END
+`,
+	},
+	"block_iops": ChartConfig{
+		Graph: `CHART {{.ChartName}} '' 'Block device operations' 'operations' 'storage' {{.Block.Name}} stacked
+DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_rd_ops
+DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_wr_ops
+DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_fl_ops
+`,
+		DataPoint: `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_rd_ops = {{.Block.RdReqs}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_wr_ops = {{.Block.WrReqs}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_fl_ops = {{.Block.FlReqs}}
+END
+`,
+	},
+	"block_times": ChartConfig{
+		Graph: `CHART {{.ChartName}} '' 'Block device time spent total' 'nanoseconds' 'storage' {{.Block.Name}} stacked
+DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_rd_time
+DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_wr_time
+DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_fl_time
+`,
+		DataPoint: `BEGIN {{.ChartName}} {{.Interval}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_rd_time = {{.Block.RdTimes}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_wr_time = {{.Block.WrTimes}}
+SET vm_{{.VmName}}_drive_{{.Block.Name}}_fl_time = {{.Block.FlTimes}}
+END
+`,
+	},
+}
+
 type Config struct {
 	URI             string
 	IntervalSeconds int
@@ -95,11 +205,6 @@ func getInterval(conf Config) time.Duration {
 	return intv.Pick()
 }
 
-type ChartTemplates struct {
-	Graph     *template.Template
-	DataPoint *template.Template
-}
-
 type Charts struct {
 	templates  map[string]ChartTemplates
 	lastUpdate time.Time
@@ -169,105 +274,31 @@ func (ch *Charts) Update(now time.Time, domStats []libvirt.DomainStats) {
 	}
 }
 
-// fields documentation:
-// https://github.com/firehol/netdata/wiki/External-Plugins
-
-var graphTemplates = map[string]string{
-	"pcpu": `CHART {{.ChartName}} '' 'pcpu time spent' 'ns' 'pcpu' 'cputime' stacked
-DIMENSION vm_{{.VmName}}_pcpu_time total
-DIMENSION vm_{{.VmName}}_pcpu_user user
-DIMENSION vm_{{.VmName}}_pcpu_sys sys
-`,
-	"balloon": `CHART {{.ChartName}} '' 'balloon size' 'kiB' 'balloon' 'ram' stacked
-DIMENSION vm_{{.VmName}}_balloon_current current
-DIMENSION vm_{{.VmName}}_balloon_maximum maximum
-`,
-	"nic_traffic": `CHART {{.ChartName}} '' 'NIC traffic' 'bytes' {{.Net.Name}} 'traffic' stacked
-DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_rx_bytes
-DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_tx_bytes
-`,
-	"nic_errors": ` CHART {{.ChartName}} '' 'NIC errors count' 'count' {{.Net.Name}} 'count' stacked
-DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_rx_errs
-DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_tx_errs
-`,
-	"nic_drops": `CHART {{.ChartName}} '' 'NIC drop count' 'packets' {{.Net.Name}} 'packets' stacked
-DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_rx_drops
-DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_tx_drops
-`,
-	"block_traffic": `CHART {{.ChartName}} '' 'Block device traffic' 'bytes' {{.Block.Name}} 'traffic' stacked
-DIMENSION vm_{{.VmName}}_drive_{{.Block.Name}}_rd_bytes
-DIMENSION vm_{{.VmName}}_drive_{{.Block.Name}}_wr_bytes
-`,
-	"block_iops": `CHART {{.ChartName}} '' 'Block device operations' 'operations' {{.Block.Name}} 'iops' stacked
-DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_rd_ops
-DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_wr_ops
-DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_fl_ops
-`,
-	"block_times": `CHART {{.ChartName}} '' 'Block device time spent total' 'nanoseconds' {{.Block.Name}} 'iotime' stacked
-DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_rd_time
-DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_wr_time
-DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_fl_time
-`,
-}
-
-var dataPointTemplates = map[string]string{
-	"pcpu": `BEGIN {{.ChartName}} {{.Interval}}
-SET vm_{{.VmName}}_pcpu_time = {{.Pcpu.Time}}
-SET vm_{{.VmName}}_pcpu_user = {{.Pcpu.User}}
-SET vm_{{.VmName}}_pcpu_sys = {{.Pcpu.System}}
-END
-`,
-	"balloon": `BEGIN {{.ChartName}} {{.Interval}}
-SET vm_{{.VmName}}_balloon_current = {{.Balloon.Current}}
-SET vm_{{.VmName}}_balloon_maximum = {{.Balloon.Maximum}}
-END
-`,
-	"nic_traffic": `BEGIN {{.ChartName}} {{.Interval}}
-SET vm_{{.VmName}}_nic_{{.Net.Name}}_rx_bytes = {{.Net.RxBytes}}
-SET vm_{{.VmName}}_nix_{{.Net.Name}}_tx_bytes = {{.Net.TxBytes}}
-END
-`,
-	"nic_errors": `BEGIN {{.ChartName}} {{.Interval}}
-SET vm_{{.VmName}}_nic_{{.Net.Name}}_rx_errs = {{.Net.RxErrs}})
-SET vm_{{.VmName}}_nix_{{.Net.Name}}_tx_errs = {{.Net.TxErrs}}
-END
-`,
-	"nic_drops": `BEGIN {{.ChartName}} {{.Interval}}
-SET vm_{{.VmName}}_nic_{{.Net.Name}}_rx_drops = {{.Net.RxDrop}}
-SET vm_{{.VmName}}_nix_{{.Net.Name}}_tx_drops = {{.Net.TxDrop}}
-END
-`,
-	"block_traffic": `BEGIN {{.ChartName}} {{.Interval}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_rd_bytes = {{.Block.RdBytes}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_wr_bytes = {{.Block.WrBytes}}
-END
-`,
-	"block_iops": `BEGIN {{.ChartName}} {{.Interval}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_rd_ops = {{.Block.RdReqs}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_wr_ops = {{.Block.WrReqs}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_fl_ops = {{.Block.FlReqs}}
-END
-`,
-	"block_times": `BEGIN {{.ChartName}} {{.Interval}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_rd_time = {{.Block.RdTimes}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_wr_time = {{.Block.WrTimes}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_fl_time = {{.Block.FlTimes}}
-END
-`,
-}
-
 func (ch *Charts) updateFromTemplates(st *VMStats, key string) error {
 	var err error
 	templates, exists := ch.templates[st.ChartName]
 	if !exists {
-		templates.Graph = template.Must(template.New(fmt.Sprintf("%s graph", key)).Parse(graphTemplates[key]))
-		err = templates.Graph.Execute(os.Stdout, st)
-		if err != nil {
-			// TODO: log
+		tmplConf, ok := templateConfig[key]
+		if !ok {
+			err = errors.New(fmt.Sprintf("no template for '%s'", key))
+			log.Printf("error getting the template config for %s: %s", key, err)
 			return err
 		}
-		templates.DataPoint = template.Must(template.New(fmt.Sprintf("%s data point", key)).Parse(dataPointTemplates[key]))
-		// TODO: what if fails?
+		templates.Graph, err = template.New(fmt.Sprintf("%s graph", key)).Parse(tmplConf.Graph)
+		if err != nil {
+			log.Printf("error setting up the graph template for %s: %s", key, err)
+			return err
+		}
+		err = templates.Graph.Execute(os.Stdout, st)
+		if err != nil {
+			log.Printf("error executing the graph template for %s: %s", key, err)
+			return err
+		}
+		templates.DataPoint, err = template.New(fmt.Sprintf("%s data point", key)).Parse(tmplConf.DataPoint)
+		if err != nil {
+			log.Printf("error setting up the sampling template for %s: %s", key, err)
+			return err
+		}
 		ch.templates[st.ChartName] = templates
 	}
 	return templates.DataPoint.Execute(os.Stdout, st)
