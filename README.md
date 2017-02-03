@@ -13,8 +13,9 @@ More to come.
 Screenshots
 -----------
 
-[screenshot1](/doc/virt1.png)
-[screenshot2](/doc/virt2.png)
+![screenshot1](/doc/virt1.png)
+
+![screenshot2](/doc/virt2.png)
 
 
 Installation
