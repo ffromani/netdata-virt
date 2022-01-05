@@ -63,7 +63,7 @@ DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_tx_bytes
 `,
 		DataPoint: `BEGIN {{.ChartName}} {{.Interval}}
 SET vm_{{.VmName}}_nic_{{.Net.Name}}_rx_bytes = {{.Net.RxBytes}}
-SET vm_{{.VmName}}_nix_{{.Net.Name}}_tx_bytes = {{.Net.TxBytes}}
+SET vm_{{.VmName}}_nic_{{.Net.Name}}_tx_bytes = {{.Net.TxBytes}}
 END
 `,
 	},
@@ -75,7 +75,7 @@ DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_tx_errs
 		DataPoint: `
 BEGIN {{.ChartName}} {{.Interval}}
 SET vm_{{.VmName}}_nic_{{.Net.Name}}_rx_errs = {{.Net.RxErrs}})
-SET vm_{{.VmName}}_nix_{{.Net.Name}}_tx_errs = {{.Net.TxErrs}}
+SET vm_{{.VmName}}_nic_{{.Net.Name}}_tx_errs = {{.Net.TxErrs}}
 END
 `,
 	},
@@ -86,7 +86,7 @@ DIMENSION vm_{{.VmName}}_nic_{{.Net.Name}}_tx_drops
 `,
 		DataPoint: `BEGIN {{.ChartName}} {{.Interval}}
 SET vm_{{.VmName}}_nic_{{.Net.Name}}_rx_drops = {{.Net.RxDrop}}
-SET vm_{{.VmName}}_nix_{{.Net.Name}}_tx_drops = {{.Net.TxDrop}}
+SET vm_{{.VmName}}_nic_{{.Net.Name}}_tx_drops = {{.Net.TxDrop}}
 END
 `,
 	},
@@ -108,9 +108,9 @@ DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_wr_ops
 DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_fl_ops
 `,
 		DataPoint: `BEGIN {{.ChartName}} {{.Interval}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_rd_ops = {{.Block.RdReqs}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_wr_ops = {{.Block.WrReqs}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_fl_ops = {{.Block.FlReqs}}
+SET vm_{{.VmName}}_drv_{{.Block.Name}}_rd_ops = {{.Block.RdReqs}}
+SET vm_{{.VmName}}_drv_{{.Block.Name}}_wr_ops = {{.Block.WrReqs}}
+SET vm_{{.VmName}}_drv_{{.Block.Name}}_fl_ops = {{.Block.FlReqs}}
 END
 `,
 	},
@@ -121,9 +121,9 @@ DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_wr_time
 DIMENSION vm_{{.VmName}}_drv_{{.Block.Name}}_fl_time
 `,
 		DataPoint: `BEGIN {{.ChartName}} {{.Interval}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_rd_time = {{.Block.RdTimes}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_wr_time = {{.Block.WrTimes}}
-SET vm_{{.VmName}}_drive_{{.Block.Name}}_fl_time = {{.Block.FlTimes}}
+SET vm_{{.VmName}}_drv_{{.Block.Name}}_rd_time = {{.Block.RdTimes}}
+SET vm_{{.VmName}}_drv_{{.Block.Name}}_wr_time = {{.Block.WrTimes}}
+SET vm_{{.VmName}}_drv_{{.Block.Name}}_fl_time = {{.Block.FlTimes}}
 END
 `,
 	},
