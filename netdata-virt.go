@@ -315,7 +315,7 @@ func main() {
 		confPath := path.Join(confDir, confFile)
 		err := conf.ReadFile(confPath)
 		if err != nil {
-			log.Fatalf("error reading the configuration file %s: %s", confPath, err)
+			log.Printf("warning... error reading the configuration file %s: %s", confPath, err)
 		}
 	}
 
